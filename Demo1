@@ -1,0 +1,160 @@
+#This is done by using soft code(using prompt)
+
+import os
+import csv
+import cv2
+import shutil
+import numpy as np
+import pandas as pd
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog
+from datetime import datetime
+import face_recognition
+
+# ──────── Attendance Handling ─────────
+
+class AttendanceDataset:
+    def __init__(self):
+        self.attendance_dir = "attendance"
+        os.makedirs(self.attendance_dir, exist_ok=True)
+        self.file = os.path.join(
+            self.attendance_dir, f"{datetime.now().strftime('%Y-%m-%d')}.csv"
+        )
+        if not os.path.exists(self.file):
+            with open(self.file, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Name', 'Time', 'Confidence'])
+
+    def add_record(self, name, confidence):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        df = pd.read_csv(self.file)
+        # Prevent duplicates in last 5 minutes
+        recent = df[
+            (df['Name'] == name) &
+            (pd.to_datetime(df['Time']) > pd.to_datetime(timestamp) - pd.Timedelta(minutes=5))
+        ]
+        if not recent.empty:
+            return None
+
+        with open(self.file, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([name, timestamp, f"{confidence:.2%}"])
+        return (name, timestamp, f"{confidence:.2%}")
+
+    def export_to_excel(self):
+        try:
+            df = pd.read_csv(self.file)
+            export_path = self.file.replace('.csv', '.xlsx')
+            df.to_excel(export_path, index=False)
+            messagebox.showinfo("Success", f"Report exported to:\n{export_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Export failed:\n{e}")
+
+
+# ──────── Main Application ─────────
+
+class FaceRecognitionApp:
+    def __init__(self):
+        # Core setup
+        self.root = tk.Tk()
+        self.root.title("Face Recognition Attendance")
+        self.known_faces_dir = "known_faces"
+        os.makedirs(self.known_faces_dir, exist_ok=True)
+
+        # Attendance dataset
+        self.dataset = AttendanceDataset()
+
+        # UI
+        self.setup_ui()
+
+    def setup_ui(self):
+        # Attendance table
+        self.tree = ttk.Treeview(
+            self.root, columns=('Name','Time','Confidence'), show='headings'
+        )
+        for col in ('Name','Time','Confidence'):
+            self.tree.heading(col, text=col)
+        self.tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Buttons
+        btn_frame = ttk.Frame(self.root)
+        btn_frame.pack(pady=5)
+        ttk.Button(
+            btn_frame, text="Add Face via Webcam", command=self.capture_new_face
+        ).grid(row=0, column=0, padx=5)
+        ttk.Button(
+            btn_frame, text="Export Attendance", command=self.dataset.export_to_excel
+        ).grid(row=0, column=1, padx=5)
+
+    def log(self, msg):
+        print(msg)
+
+    def capture_new_face(self):
+        # Dialog to ask for name
+        name = simpledialog.askstring("Enter Name", "Person's Name:")
+        if not name:
+            return
+
+        save_dir = os.path.join(self.known_faces_dir, name)
+        os.makedirs(save_dir, exist_ok=True)
+
+        cap = cv2.VideoCapture(0)
+        count = 0
+        max_attempts = 50
+
+        while count < 20 and max_attempts > 0:
+            ret, frame = cap.read()
+            if not ret:
+                max_attempts -= 1
+                continue
+
+            # 1) Convert any bit-depth to 8-bit
+            frame_8 = cv2.convertScaleAbs(frame)
+
+            # 2) Ensure it's BGR with 3 channels
+            if frame_8.ndim == 2:
+                frame_8 = cv2.cvtColor(frame_8, cv2.COLOR_GRAY2BGR)
+            elif frame_8.shape[2] == 4:
+                frame_8 = cv2.cvtColor(frame_8, cv2.COLOR_BGRA2BGR)
+
+            # Face detection expects RGB
+            rgb = cv2.cvtColor(frame_8, cv2.COLOR_BGR2RGB)
+            locs = face_recognition.face_locations(rgb)
+            if len(locs) == 1:
+                path = os.path.join(save_dir, f"{name}_{count}.png")
+                cv2.imwrite(path, frame_8)
+                count += 1
+                self.log(f"Saved image {count}/20: {path}")
+
+                # Preview
+                preview = cv2.resize(frame_8, (200,200))
+                cv2.imshow("Preview", preview)
+                cv2.waitKey(100)
+
+            max_attempts -= 1
+
+        cap.release()
+        cv2.destroyAllWindows()
+
+        if count < 5:
+            messagebox.showwarning(
+                "Warning", "Captured fewer than 5 usable images. Registration canceled."
+            )
+            shutil.rmtree(save_dir)
+            return
+
+        messagebox.showinfo(
+            "Success", f"Registered {name} with {count} images."
+        )
+        # Immediately record attendance for demo
+        rec = self.dataset.add_record(name, confidence=0.99)
+        if rec:
+            self.tree.insert('', 'end', values=rec)
+
+    def run(self):
+        self.root.mainloop()
+
+
+if __name__ == "__main__":
+    app = FaceRecognitionApp()
+    app.run()
