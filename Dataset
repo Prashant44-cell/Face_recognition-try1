@@ -1,0 +1,51 @@
+#This is done using soft code (with the help of LLM)
+
+# attendance_dataset.py
+
+import os
+import csv
+import pandas as pd
+from datetime import datetime
+from tkinter import messagebox
+
+class AttendanceDataset:
+    def __init__(self):
+        self.attendance_dir = "attendance"
+        self.attendance_file = os.path.join(
+            self.attendance_dir, f"{datetime.now().strftime('%Y-%m-%d')}.csv"
+        )
+        self._ensure_csv_exists()
+
+    def _ensure_csv_exists(self):
+        os.makedirs(self.attendance_dir, exist_ok=True)
+        if not os.path.exists(self.attendance_file):
+            with open(self.attendance_file, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Name', 'Time', 'Confidence'])
+
+    def add_record(self, name, confidence):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        df = pd.read_csv(self.attendance_file)
+        # Prevent duplicate within 5 mins
+        recent = df[
+            (df['Name'] == name) &
+            (pd.to_datetime(df['Time']) > pd.to_datetime(timestamp) - pd.Timedelta(minutes=5))
+        ]
+        if not recent.empty:
+            return None
+
+        with open(self.attendance_file, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([name, timestamp, f"{confidence:.2%}"])
+        return (name, timestamp, f"{confidence:.2%}")
+
+    def export_to_excel(self):
+        try:
+            df = pd.read_csv(self.attendance_file)
+            export_path = os.path.join(
+                self.attendance_dir, f"full_report_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
+            )
+            df.to_excel(export_path, index=False)
+            messagebox.showinfo("Success", f"Report exported to {export_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Export failed: {str(e)}")
